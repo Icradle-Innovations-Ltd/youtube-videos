@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Downloader</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>YouTube Video Downloader</h1>
+    <div class="input-group">
+      <input type="text" id="youtubeUrl" placeholder="Enter YouTube URL">
+      <button id="fetchBtn">Get Formats</button>
+    </div>
+    
+    <div id="formatSelection" class="hidden">
+      <h2>Available Formats</h2>
+      <div class="format-options">
+        <div class="format-type">
+          <h3>Video Formats</h3>
+          <div id="videoFormats" class="format-buttons"></div>
+        </div>
+        <div class="format-type">
+          <h3>Audio Only</h3>
+          <button class="format-btn mp3-btn" data-type="mp3">Download MP3</button>
+        </div>
+      </div>
+      <button id="downloadBtn" class="hidden">Start Download</button>
+    </div>
+    
+    <div id="progressContainer" class="hidden">
+      <div class="progress-bar">
+        <div id="progressFill" class="progress-fill"></div>
+      </div>
+      <div id="progressText">Preparing download...</div>
+      <div id="statusMessage"></div>
+      <button id="cancelBtn" class="cancel-btn hidden">Cancel Download</button>
+    </div>
+  </div>
+
+  <script>
+    let currentDownloadId = null;
+    let selectedFormat = null;
+    let selectedType = null;
+    let progressInterval = null;
+    let activeDownload = null;
+
+    // DOM Elements
+    const elements = {
+      youtubeUrl: document.getElementById('youtubeUrl'),
+      fetchBtn: document.getElementById('fetchBtn'),
+      formatSelection: document.getElementById('formatSelection'),
+      videoFormats: document.getElementById('videoFormats'),
+      downloadBtn: document.getElementById('downloadBtn'),
+      progressContainer: document.getElementById('progressContainer'),
+      progressFill: document.getElementById('progressFill'),
+      progressText: document.getElementById('progressText'),
+      statusMessage: document.getElementById('statusMessage'),
+      cancelBtn: document.getElementById('cancelBtn')
+    };
+
+    // Event Listeners
+    elements.fetchBtn.addEventListener('click', fetchFormats);
+    elements.downloadBtn.addEventListener('click', startDownload);
+    elements.cancelBtn.addEventListener('click', cancelDownload);
+
+    async function fetchFormats() {
+      const url = elements.youtubeUrl.value.trim();
+      if (!url) {
+        showError('Please enter a YouTube URL');
+        return;
+      }
+
+      showStatus('Fetching available formats...');
+      toggleLoadingState(true);
+      
+      try {
+        const response = await fetch('/get-formats', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to fetch formats');
+        }
+        
+        const data = await response.json();
+        displayFormats(data.formats);
+        elements.formatSelection.classList.remove('hidden');
+        clearStatus();
+      } catch (error) {
+        showError(error.message);
+      } finally {
+        toggleLoadingState(false);
+      }
+    }
+
+    function displayFormats(formats) {
+      elements.videoFormats.innerHTML = '';
+      
+      // Filter and group video formats by resolution
+      const videoFormats = formats.filter(f => !f.note.includes('audio only'));
+      const formatGroups = {};
+      
+      videoFormats.forEach(format => {
+        const resolution = format.resolution || 'Unknown';
+        if (!formatGroups[resolution]) {
+          formatGroups[resolution] = [];
+        }
+        formatGroups[resolution].push(format);
+      });
+      
+      // Create buttons for each resolution
+      Object.entries(formatGroups).forEach(([resolution, formats]) => {
+        const btn = document.createElement('button');
+        btn.className = 'format-btn';
+        btn.textContent = `${resolution} (${formats[0].ext})`;
+        btn.dataset.format = formats[0].id;
+        btn.dataset.type = 'mp4';
+        
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.format-btn').forEach(b => b.classList.remove('selected'));
+          btn.classList.add('selected');
+          selectedFormat = btn.dataset.format;
+          selectedType = btn.dataset.type;
+          elements.downloadBtn.classList.remove('hidden');
+        });
+        
+        elements.videoFormats.appendChild(btn);
+      });
+      
+      // MP3 button
+      document.querySelector('.mp3-btn').addEventListener('click', function() {
+        document.querySelectorAll('.format-btn').forEach(b => b.classList.remove('selected'));
+        this.classList.add('selected');
+        selectedFormat = null;
+        selectedType = 'mp3';
+        elements.downloadBtn.classList.remove('hidden');
+      });
+    }
+
+    async function startDownload() {
+      const url = elements.youtubeUrl.value.trim();
+      if (!url) {
+        showError('Please enter a YouTube URL');
+        return;
+      }
+
+      showStatus('Starting download...');
+      toggleDownloadState(true);
+      
+      try {
+        const response = await fetch('/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            url, 
+            format: selectedFormat, 
+            type: selectedType 
+          })
+        });
+        
+        const data = await response.json();
+        if (data.error) throw new Error(data.error);
+        
+        currentDownloadId = data.downloadId;
+        activeDownload = { id: currentDownloadId };
+        monitorProgress();
+      } catch (error) {
+        showError(error.message);
+        toggleDownloadState(false);
+      }
+    }
+
+    function monitorProgress() {
+      clearInterval(progressInterval);
+      
+      progressInterval = setInterval(async () => {
+        try {
+          const response = await fetch(`/progress/${currentDownloadId}`);
+          const data = await response.json();
+          
+          if (data.error) {
+            clearInterval(progressInterval);
+            showError(data.error);
+            toggleDownloadState(false);
+            return;
+          }
+          
+          const progress = Math.round(data.progress || 0);
+          updateProgress(progress);
+          
+          if (data.filename) {
+            clearInterval(progressInterval);
+            completeDownload(data.filename);
+          }
+        } catch (error) {
+          clearInterval(progressInterval);
+          showError('Failed to check progress');
+          toggleDownloadState(false);
+        }
+      }, 1000);
+    }
+
+    function updateProgress(progress) {
+      elements.progressFill.style.width = `${progress}%`;
+      elements.progressText.textContent = `Downloading: ${progress}%`;
+      
+      // Show cancel button after download starts
+      if (progress > 0 && progress < 100) {
+        elements.cancelBtn.classList.remove('hidden');
+      }
+    }
+
+    async function completeDownload(filename) {
+      try {
+        showSuccess('Download complete! Preparing file...');
+        
+        // Small delay to ensure file is ready
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Trigger file download
+        window.location.href = `/download-file/${currentDownloadId}`;
+        
+        // Reset after a short delay
+        setTimeout(() => {
+          showSuccess('Download completed successfully!');
+          resetDownloadState();
+        }, 2000);
+      } catch (error) {
+        showError('Failed to complete download');
+        resetDownloadState();
+      }
+    }
+
+    async function cancelDownload() {
+      if (!currentDownloadId) return;
+      
+      try {
+        showStatus('Cancelling download...');
+        clearInterval(progressInterval);
+        
+        // Send cancellation request to server
+        await fetch(`/cancel-download/${currentDownloadId}`, { method: 'POST' });
+        
+        showError('Download cancelled');
+      } catch (error) {
+        showError('Failed to cancel download');
+      } finally {
+        resetDownloadState();
+      }
+    }
+
+    function toggleLoadingState(isLoading) {
+      elements.fetchBtn.disabled = isLoading;
+      if (isLoading) {
+        elements.fetchBtn.innerHTML = '<span class="spinner"></span> Processing...';
+      } else {
+        elements.fetchBtn.textContent = 'Get Formats';
+      }
+    }
+
+    function toggleDownloadState(isDownloading) {
+      elements.downloadBtn.disabled = isDownloading;
+      elements.progressContainer.classList.toggle('hidden', !isDownloading);
+      elements.youtubeUrl.disabled = isDownloading;
+      elements.fetchBtn.disabled = isDownloading;
+      
+      if (isDownloading) {
+        elements.progressFill.style.width = '0%';
+        elements.progressText.textContent = 'Preparing download...';
+        elements.cancelBtn.classList.add('hidden');
+      }
+    }
+
+    function resetDownloadState() {
+      clearInterval(progressInterval);
+      currentDownloadId = null;
+      activeDownload = null;
+      toggleDownloadState(false);
+    }
+
+    function showStatus(message) {
+      elements.statusMessage.textContent = message;
+      elements.statusMessage.className = 'status';
+    }
+
+    function showError(message) {
+      elements.statusMessage.textContent = message;
+      elements.statusMessage.className = 'error';
+    }
+
+    function showSuccess(message) {
+      elements.statusMessage.textContent = message;
+      elements.statusMessage.className = 'success';
+    }
+
+    function clearStatus() {
+      elements.statusMessage.textContent = '';
+      elements.statusMessage.className = '';
+    }
+
+    // Clean up on page exit
+    window.addEventListener('beforeunload', () => {
+      if (currentDownloadId) {
+        // Try to cancel any active download
+        fetch(`/cancel-download/${currentDownloadId}`, { 
+          method: 'POST',
+          keepalive: true 
+        });
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Downloader</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>YouTube Video Downloader</h1>
+    <div class="input-group">
+      <input type="text" id="youtubeUrl" placeholder="Enter YouTube URL">
+      <button id="fetchBtn">Get Formats</button>
+    </div>
+    
+    <div id="formatSelection" class="hidden">
+      <h2>Available Formats</h2>
+      <div class="format-options">
+        <div class="format-type">
+          <h3>Video Formats</h3>
+          <div id="videoFormats" class="format-buttons"></div>
+        </div>
+        <div class="format-type">
+          <h3>Audio Only</h3>
+          <button class="format-btn mp3-btn" data-type="mp3">Download MP3</button>
+        </div>
+      </div>
+      <button id="downloadBtn" class="hidden">Start Download</button>
+    </div>
+    
+    <div id="progressContainer" class="hidden">
+      <div class="progress-bar">
+        <div id="progressFill" class="progress-fill"></div>
+      </div>
+      <div id="progressText">Preparing download...</div>
+      <div id="statusMessage"></div>
+      <button id="cancelBtn" class="cancel-btn hidden">Cancel Download</button>
+    </div>
+  </div>
+
+  <script src="/js/app.js" type="module"></script>
+</body>
+</html>
